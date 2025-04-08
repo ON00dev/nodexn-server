@@ -137,6 +137,10 @@ app.get('/logs/stream', (req, res) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.redirect('/logs');
+});
+
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
