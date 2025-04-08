@@ -90,6 +90,43 @@ app.post('/execute', upload.single('file'), (req, res) => {
   }
 });
 
+app.get('/logs', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.write('<html><head><title>Logs</title></head><body>');
+  res.write('<h1>Logs em Tempo Real</h1>');
+  res.write('<pre id="log"></pre>');
+  res.write(`<script>\n    const eventSource = new EventSource("/logs/stream");
+    eventSource.onmessage = function(event) {
+      document.getElementById("log").innerText += event.data + "\n";
+    };
+  </script>`);
+  res.end('</body></html>');
+});
+
+app.get('/logs/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const logMessage = (message) => {
+    res.write(`data: ${message}\n\n`);
+  };
+
+  logMessage('Servidor iniciado');
+
+  app.on('request', () => {
+    logMessage('Nova requisição recebida');
+  });
+
+  app.on('execution', () => {
+    logMessage('Execução iniciada');
+  });
+
+  app.on('close', () => {
+    logMessage('Conexão encerrada');
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
