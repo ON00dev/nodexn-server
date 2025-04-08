@@ -31,12 +31,22 @@ function installDependencies(dependencies) {
 
 // Executa o index.js extraído
 function runProject(res) {
-  const indexPath = path.join(PROJECT_DIR, 'index.js');
-  if (!fs.existsSync(indexPath)) {
-    return res.status(400).send('index.js não encontrado.');
+  const entryPoints = ['index.js', 'main.js'];
+  let entryPoint = null;
+
+  for (const point of entryPoints) {
+    const filePath = path.join(PROJECT_DIR, point);
+    if (fs.existsSync(filePath)) {
+      entryPoint = point;
+      break;
+    }
   }
 
-  const child = spawn('node', [indexPath], { cwd: PROJECT_DIR });
+  if (!entryPoint) {
+    return res.status(400).send('Nenhum ponto de entrada válido encontrado (index.js ou main.js).');
+  }
+
+  const child = spawn('node', [entryPoint], { cwd: PROJECT_DIR });
 
   child.stdout.on('data', (data) => {
     res.write(data);
