@@ -2,7 +2,8 @@
 
 const express = require('express');
 const multer = require('multer');
-const fs = require('fs');
+const fs = require('fs').promises;
+const fssync = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
 const cors = require('cors');
@@ -15,16 +16,20 @@ const PORT = process.env.PORT || 3000;
 
 const PROJECT_DIR = path.join(__dirname, 'project');
 
-function cleanProjectDir() {
-  if (fs.existsSync(PROJECT_DIR)) {
-    fs.rmSync(PROJECT_DIR, { recursive: true, force: true });
+async function cleanProjectDir() {
+  try {
+    if (fssync.existsSync(PROJECT_DIR)) {
+      await fs.rm(PROJECT_DIR, { recursive: true, force: true });
+    }
+    await fs.mkdir(PROJECT_DIR);
+  } catch (err) {
+    console.error('Erro ao limpar diretório do projeto:', err);
   }
-  fs.mkdirSync(PROJECT_DIR);
 }
 
 function installDependencies(targetDir) {
   try {
-    if (fs.existsSync(path.join(targetDir, 'package.json'))) {
+    if (fssync.existsSync(path.join(targetDir, 'package.json'))) {
       console.log('✅ package.json encontrado. Instalando dependências automaticamente...');
       execSync('npm install', { cwd: targetDir, stdio: 'inherit' });
     } else {
@@ -38,8 +43,8 @@ function installDependencies(targetDir) {
 
 function runProject(res, sandboxDir, type, entryPoint) {
   const entryFile = path.join(sandboxDir, entryPoint);
-  if (!fs.existsSync(entryFile)) {
-    fs.rmSync(sandboxDir, { recursive: true, force: true });
+  if (!fssync.existsSync(entryFile)) {
+    fs.rm(sandboxDir, { recursive: true, force: true });
     return res.status(400).send('Ponto de entrada não encontrado.');
   }
 
@@ -58,21 +63,35 @@ function runProject(res, sandboxDir, type, entryPoint) {
     res.write(`ERROR: ${err.message}`);
   });
 
-  child.on('close', (code) => {
+  child.on('close', async (code) => {
     res.end(`\nProcesso finalizado com código ${code}`);
-    fs.rmSync(sandboxDir, { recursive: true, force: true });
+    await fs.rm(sandboxDir, { recursive: true, force: true });
   });
 }
 
-app.post('/execute', upload.single('file'), (req, res) => {
+async function copyRecursiveAsync(src, dest) {
+  const stat = await fs.stat(src);
+  if (stat.isDirectory()) {
+    await fs.mkdir(dest, { recursive: true });
+    const entries = await fs.readdir(src);
+    for (const child of entries) {
+      if (child === '.git') continue;
+      await copyRecursiveAsync(path.join(src, child), path.join(dest, child));
+    }
+  } else if (stat.isFile()) {
+    await fs.copyFile(src, dest);
+  }
+}
+
+app.post('/execute', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).send('Nenhum arquivo enviado.');
   }
 
   try {
-    cleanProjectDir();
+    await cleanProjectDir();
 
-    const exnContent = fs.readFileSync(req.file.path, 'utf8');
+    const exnContent = await fs.readFile(req.file.path, 'utf8');
     if (!exnContent.trim()) {
       return res.status(400).send('Arquivo vazio.');
     }
@@ -95,28 +114,15 @@ app.post('/execute', upload.single('file'), (req, res) => {
     for (const [filename, content] of Object.entries(embeddedFiles)) {
       const filePath = path.join(PROJECT_DIR, filename);
       const dirPath = path.dirname(filePath);
-      fs.mkdirSync(dirPath, { recursive: true });
-      fs.writeFileSync(filePath, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(filePath, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
     }
 
     installDependencies(PROJECT_DIR);
 
-    const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-'));
+    const sandboxDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sandbox-'));
 
-    function copyRecursiveSync(src, dest) {
-      const stat = fs.statSync(src);
-      if (stat.isDirectory()) {
-        fs.mkdirSync(dest, { recursive: true });
-        fs.readdirSync(src).forEach(child => {
-          if (child === '.git') return; // Ignora .git
-          copyRecursiveSync(path.join(src, child), path.join(dest, child));
-        });
-      } else if (stat.isFile()) {
-        fs.copyFileSync(src, dest);
-      }
-    }
-
-    copyRecursiveSync(PROJECT_DIR, sandboxDir);
+    await copyRecursiveAsync(PROJECT_DIR, sandboxDir);
 
     let projectType = exn.metadata?.type || 'commonjs';
     let entryPoint = exn.metadata?.entryPoint || 'main.js';
@@ -127,7 +133,7 @@ app.post('/execute', upload.single('file'), (req, res) => {
     console.error(err);
     res.status(500).send(`Erro no processamento: ${err.message}`);
   } finally {
-    fs.unlinkSync(req.file.path);
+    await fs.unlink(req.file.path);
   }
 });
 
